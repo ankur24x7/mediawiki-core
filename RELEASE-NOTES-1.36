@@ -1,0 +1,179 @@
+= MediaWiki 1.36 =
+
+== MediaWiki 1.36.0-PRERELEASE ==
+
+THIS IS NOT A RELEASE YET
+
+MediaWiki 1.36 is an alpha-quality development branch, and is not recommended
+for use in production.
+
+== Upgrading notes for 1.36 ==
+Don't forget to always back up your database before upgrading!
+
+See the file UPGRADE for more detailed upgrade instructions, including
+important information when upgrading from versions prior to 1.11.
+
+Some specific notes for MediaWiki 1.36 upgrades are below:
+
+* …
+
+For notes on 1.35.x and older releases, see HISTORY.
+
+=== Configuration changes for system administrators in 1.36 ===
+
+…
+
+==== New configuration ====
+* $wgManualRevertSearchRadius – this introduces a new feature that marks edits
+  as reverts if they restore the page to an exact previous state. This
+  configuration variable sets the maximum number of revisions of a page that
+  will be checked against every new edit. Set this to 0 to disable the feature
+  entirely.
+* …
+
+==== Changed configuration ====
+* …
+
+==== Removed configuration ====
+* $wgUseTwoButtonsSearchForm - This setting, deprecated in 1.35, has been
+  removed.
+* …
+
+=== New user-facing features in 1.36 ===
+* …
+
+=== New developer features in 1.36 ===
+* …
+
+=== External library changes in 1.36 ===
+* …
+
+==== New external libraries ====
+* …
+
+===== New development-only external libraries =====
+* …
+
+==== Changed external libraries ====
+* pear/mail_mime was upgraded from 1.10.8 to 1.10.9.
+* wikimedia/html-formatter was upgraded from 1.0.2 to 2.0.0.
+* …
+
+===== Changed development-only external libraries =====
+* …
+
+==== Removed external libraries ====
+* The html5shiv library has been removed, as support for Internet Explorer 8 has
+  been dropped.
+* …
+
+=== Bug fixes in 1.36 ===
+* …
+
+=== Action API changes in 1.36 ===
+* …
+
+=== Action API internal changes in 1.36 ===
+* …
+
+=== Languages updated in 1.36 ===
+MediaWiki supports over 350 languages. Many localisations are updated regularly.
+Below only new and removed languages are listed, as well as changes to languages
+because of Phabricator reports.
+
+* …
+
+=== Breaking changes in 1.36 ===
+* Multiple methods that fell back to the $wgUser global variable were
+  individually hard deprecated previously. The following have now been removed:
+  - ApiTestCase::doLogin
+  - All methods of the old SpecialPageFactory; the entire class was removed
+* The global function `wfWaitForSlaves`, deprecated in 1.27 and hard-deprecated
+  in 1.35, has been removed. Use LBFactory::waitForReplication() instead.
+* The global variable $wgMemc, deprecated since 1.35, has been removed.
+  Usage should generally be migrated to WANObjectCache, or if you really need
+  the internal object, use ObjectCache::getLocalClusterInstance instead.
+* CategoryFinder, which was deprecated in 1.31 and hard-deprecated in 1.35,
+  has been removed.
+* Sanitizer::escapeId(), deprecated in 1.30, has been removed.
+* The ParserBeforeTidy hook, deprecated in 1.35, has been removed.
+* The support for IE8 has been dropped.
+* Less mixin `.background-image-svg-quick()` from mediawiki.mixins.less,
+  deprecated since 1.35, has been removed.
+* The ResourceLoader module `mediawiki.legacy.oldshared` and its file
+  'oldshared.css', deprecated since 1.35 has been removed (T248357).
+* The LinkBegin and LinkEnd hooks, deprecated in 1.28, have been removed. You
+  can instead use the HtmlPageLinkRendererBegin and HtmlPageLinkRendererEnd
+  hooks, respectively.
+* Skin::getDynamicStylesheetQuery() deprecated in 1.32, has been removed. You
+  should use action=raw&ctype=text/css directly.
+* The following User methods, deprecated and moved to BlockManager in 1.34,
+  were removed: isDnsBlacklisted, inDnsBlacklist, isLocallyBlockedProxy,
+  trackBlockWithCookie.
+* …
+
+=== Deprecations in 1.36 ===
+* The User class, which was marked as @newable in 1.35, is no longer newable,
+  meaning that it is no longer safe to manually call the constructor via
+  `new User`. Instead, use the UserFactory service.
+* Use of the `preprocessor=Preprocessor_DOM` option in parser test files has
+  been deprecated.  Preprocessor_DOM was removed in 1.35.
+* ParserOptions::setTidy() has been deprecated.  It has had no effect since
+  1.35.
+* Sanitizer::escapeIdReferenceList() has been deprecated; it will eventually
+  be made private to the class, as it appears to have no uses outside the
+  Sanitizer class.
+* Skin::getIndicatorsHTML() is deprecated. The functionality can be retained
+  by reimplementing the method using the raw indicators data from
+  OutputPage::getIndicators.
+* The PageProps class was converted to a service. PageProps::overrideInstance
+  was deprecated, and MediaWikiServices::redefineService should be used
+  instead.
+* …
+
+=== Other changes in 1.36 ===
+* The 'tidy' key in ParserOptions (used in the parser cache) has been removed.
+  It has had no effect since 1.35.
+* …
+
+== Compatibility ==
+MediaWiki 1.36 requires PHP 7.2.22 or later, and the following PHP extensions:
+
+* ctype
+* dom
+* fileinfo
+* iconv
+* json
+* mbstring
+* xml
+
+MySQL/MariaDB is the recommended DBMS. PostgreSQL or SQLite can also be used,
+but support for them is somewhat less mature.
+
+The supported versions are:
+
+* MySQL 5.5.8 or later
+* PostgreSQL 9.2 or later
+* SQLite 3.8.0 or later
+
+== Online documentation ==
+Documentation for both end-users and site administrators is available on
+MediaWiki.org, and is covered under the GNU Free Documentation License (except
+for pages that explicitly state that their contents are in the public domain):
+
+       https://www.mediawiki.org/wiki/Special:MyLanguage/Documentation
+
+== Mailing list ==
+A mailing list is available for MediaWiki user support and discussion:
+
+       https://lists.wikimedia.org/mailman/listinfo/mediawiki-l
+
+A low-traffic announcements-only list is also available:
+
+       https://lists.wikimedia.org/mailman/listinfo/mediawiki-announce
+
+It's highly recommended that you sign up for one of these lists if you're
+going to run a public MediaWiki, so you can be notified of security fixes.
+
+== IRC help ==
+There's usually someone online in #mediawiki on irc.freenode.net.

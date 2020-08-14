@@ -25,41 +25,104 @@
  * @author Daniel Kinzler
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Content object for CSS pages.
  *
+ * @newable
  * @ingroup Content
  */
 class CssContent extends TextContent {
-	public function __construct( $text ) {
-		parent::__construct( $text, CONTENT_MODEL_CSS );
+
+	/**
+	 * @var bool|Title|null
+	 */
+	private $redirectTarget = false;
+
+	/**
+	 * @stable to call
+	 * @param string $text CSS code.
+	 * @param string $modelId the content content model
+	 */
+	public function __construct( $text, $modelId = CONTENT_MODEL_CSS ) {
+		parent::__construct( $text, $modelId );
 	}
 
 	/**
 	 * Returns a Content object with pre-save transformations applied using
 	 * Parser::preSaveTransform().
 	 *
-	 * @param $title Title
-	 * @param $user User
-	 * @param $popts ParserOptions
-	 * @return Content
+	 * @param Title $title
+	 * @param User $user
+	 * @param ParserOptions $popts
+	 *
+	 * @return CssContent
+	 *
+	 * @see TextContent::preSaveTransform
 	 */
 	public function preSaveTransform( Title $title, User $user, ParserOptions $popts ) {
-		global $wgParser;
-		// @todo Make pre-save transformation optional for script pages
+		// @todo Make pre-save transformation optional for script pages (T34858)
 
-		$text = $this->getNativeData();
-		$pst = $wgParser->preSaveTransform( $text, $title, $user, $popts );
+		if ( !$user->getBoolOption( 'pst-cssjs' ) ) {
+			// Allow bot users to disable the pre-save transform for CSS/JS (T236828).
+			$popts = clone $popts;
+			$popts->setPreSaveTransform( false );
+		}
 
-		return new CssContent( $pst );
+		$text = $this->getText();
+		$pst = MediaWikiServices::getInstance()->getParser()
+			->preSaveTransform( $text, $title, $user, $popts );
+
+		return new static( $pst );
 	}
 
+	/**
+	 * @return string CSS wrapped in a <pre> tag.
+	 */
 	protected function getHtml() {
-		$html = "";
-		$html .= "<pre class=\"mw-code mw-css\" dir=\"ltr\">\n";
-		$html .= $this->getHighlightHtml();
-		$html .= "\n</pre>\n";
-
-		return $html;
+		return Html::element( 'pre',
+			[ 'class' => 'mw-code mw-css', 'dir' => 'ltr' ],
+			"\n" . $this->getText() . "\n"
+		) . "\n";
 	}
+
+	/**
+	 * @param Title $target
+	 * @return CssContent
+	 */
+	public function updateRedirect( Title $target ) {
+		if ( !$this->isRedirect() ) {
+			return $this;
+		}
+
+		return $this->getContentHandler()->makeRedirectContent( $target );
+	}
+
+	/**
+	 * @return Title|null
+	 */
+	public function getRedirectTarget() {
+		if ( $this->redirectTarget !== false ) {
+			return $this->redirectTarget;
+		}
+		$this->redirectTarget = null;
+		$text = $this->getText();
+		if ( strpos( $text, '/* #REDIRECT */' ) === 0 ) {
+			// Extract the title from the url
+			if ( preg_match( '/title=(.*?)&action=raw/', $text, $matches ) ) {
+				$title = Title::newFromText( urldecode( $matches[1] ) );
+				if ( $title ) {
+					// Have a title, check that the current content equals what
+					// the redirect content should be
+					if ( $this->equals( $this->getContentHandler()->makeRedirectContent( $title ) ) ) {
+						$this->redirectTarget = $title;
+					}
+				}
+			}
+		}
+
+		return $this->redirectTarget;
+	}
+
 }

@@ -6,114 +6,129 @@
  * @file
  */
 
-/* Configuration */
-
-// Set a flag which can be used to detect when other scripts have been entered through this entry point or not
+// Set a flag which can be used to detect when other scripts have been entered
+// through this entry point or not.
 define( 'MW_PHPUNIT_TEST', true );
 
 // Start up MediaWiki in command-line mode
 require_once dirname( dirname( __DIR__ ) ) . "/maintenance/Maintenance.php";
 
 class PHPUnitMaintClass extends Maintenance {
-
-	function __construct() {
+	public function __construct() {
 		parent::__construct();
-		$this->addOption( 'with-phpunitdir',
-			'Directory to include PHPUnit from, for example when using a git fetchout from upstream. Path will be prepended to PHP `include_path`.',
-			false, # not required
-			true # need arg
+		$this->setAllowUnregisteredOptions( true );
+		$this->addOption( 'use-filebackend', 'Use filebackend', false, true );
+		$this->addOption( 'use-bagostuff', 'Use bagostuff', false, true );
+		$this->addOption( 'use-jobqueue', 'Use jobqueue', false, true );
+		$this->addOption( 'use-normal-tables', 'Use normal DB tables.', false, false );
+		$this->addOption(
+			'reuse-db', 'Init DB only if tables are missing and keep after finish.',
+			false,
+			false
 		);
+	}
+
+	public function setup() {
+		parent::setup();
+
+		require_once __DIR__ . '/../common/TestSetup.php';
+		TestSetup::snapshotGlobals();
 	}
 
 	public function finalSetup() {
 		parent::finalSetup();
 
-		global $wgMainCacheType, $wgMessageCacheType, $wgParserCacheType;
-		global $wgLanguageConverterCacheType, $wgUseDatabaseMessages;
-		global $wgLocaltimezone, $wgLocalisationCacheConf;
-		global $wgDevelopmentWarnings;
-
 		// Inject test autoloader
-		require_once __DIR__ . '/../TestsAutoLoader.php';
+		self::requireTestsAutoloader();
 
-		// wfWarn should cause tests to fail
-		$wgDevelopmentWarnings = true;
+		TestSetup::applyInitialConfig();
 
-		$wgMainCacheType = CACHE_NONE;
-		$wgMessageCacheType = CACHE_NONE;
-		$wgParserCacheType = CACHE_NONE;
-		$wgLanguageConverterCacheType = CACHE_NONE;
-
-		$wgUseDatabaseMessages = false; # Set for future resets
-
-		// Assume UTC for testing purposes
-		$wgLocaltimezone = 'UTC';
-
-		$wgLocalisationCacheConf['storeClass'] = 'LCStoreNull';
-
-		// Bug 44192 Do not attempt to send a real e-mail
-		Hooks::clear( 'AlternateUserMailer' );
-		Hooks::register(
-			'AlternateUserMailer',
-			function () {
-				return false;
-			}
-		);
+		ExtensionRegistry::getInstance()->setLoadTestClassesAndNamespaces( true );
 	}
 
 	public function execute() {
-		global $IP;
+		// Deregister handler from MWExceptionHandler::installHandle so that PHPUnit's own handler
+		// stays in tact.
+		// Has to in execute() instead of finalSetup(), because finalSetup() runs before
+		// doMaintenance.php includes Setup.php, which calls MWExceptionHandler::installHandle().
+		restore_error_handler();
 
-		# Make sure we have --configuration or PHPUnit might complain
-		if ( !in_array( '--configuration', $_SERVER['argv'] ) ) {
-			//Hack to eliminate the need to use the Makefile (which sucks ATM)
-			array_splice( $_SERVER['argv'], 1, 0,
-				array( '--configuration', $IP . '/tests/phpunit/suite.xml' ) );
+		$this->forceFormatServerArgv();
+
+		if ( !class_exists( 'PHPUnit\\Framework\\TestCase' ) ) {
+			echo "PHPUnit not found. Please install it and other dev dependencies by
+		running `composer install` in MediaWiki root directory.\n";
+			exit( 1 );
 		}
 
-		# --with-phpunitdir let us override the default PHPUnit version
-		if ( $phpunitDir = $this->getOption( 'with-phpunitdir' ) ) {
-			# Sanity checks
-			if ( !is_dir( $phpunitDir ) ) {
-				$this->error( "--with-phpunitdir should be set to an existing directory", 1 );
-			}
-			if ( !is_readable( $phpunitDir . "/PHPUnit/Runner/Version.php" ) ) {
-				$this->error( "No usable PHPUnit installation in $phpunitDir.\nAborting.\n", 1 );
-			}
+		// Start an output buffer to avoid headers being sent by constructors,
+		// data providers, etc. (T206476)
+		ob_start();
 
-			# Now prepends provided PHPUnit directory
-			$this->output( "Will attempt loading PHPUnit from `$phpunitDir`\n" );
-			set_include_path( $phpunitDir
-				. PATH_SEPARATOR . get_include_path() );
+		fwrite( STDERR, 'Using PHP ' . PHP_VERSION . "\n" );
 
-			# Cleanup $args array so the option and its value do not
-			# pollute PHPUnit
-			$key = array_search( '--with-phpunitdir', $_SERVER['argv'] );
-			unset( $_SERVER['argv'][$key] ); // the option
-			unset( $_SERVER['argv'][$key + 1] ); // its value
-			$_SERVER['argv'] = array_values( $_SERVER['argv'] );
+		foreach ( MediaWikiCliOptions::$additionalOptions as $option => $default ) {
+			MediaWikiCliOptions::$additionalOptions[$option] = $this->getOption( $option );
 		}
+
+		$command = new MediaWikiPHPUnitCommand();
+		$command->run( $_SERVER['argv'], true );
 	}
 
 	public function getDbType() {
 		return Maintenance::DB_ADMIN;
 	}
+
+	protected function addOption( $name, $description, $required = false,
+		$withArg = false, $shortName = false, $multiOccurrence = false
+	) {
+		// ignore --quiet which does not really make sense for unit tests
+		if ( $name !== 'quiet' ) {
+			parent::addOption( $name, $description, $required, $withArg, $shortName, $multiOccurrence );
+		}
+	}
+
+	/**
+	 * Force the format of elements in $_SERVER['argv']
+	 *  - Split args such as "wiki=enwiki" into two separate arg elements "wiki" and "enwiki"
+	 */
+	private function forceFormatServerArgv() {
+		$argv = [];
+		for ( $key = 0; $key < count( $_SERVER['argv'] ); $key++ ) {
+			$arg = $_SERVER['argv'][$key];
+
+			if ( $key === 0 ) {
+				$argv[0] = $arg;
+				continue;
+			}
+
+			if ( preg_match( '/^--(.*)$/', $arg, $match ) ) {
+				$opt = $match[1];
+				$parts = explode( '=', $opt, 2 );
+				$opt = $parts[0];
+
+				// Avoid confusing PHPUnit with MediaWiki-specific parameters
+				if ( isset( $this->mParams[$opt] ) ) {
+					if ( $this->mParams[$opt]['withArg'] && !isset( $parts[1] ) ) {
+						// skip the value after the option name as well
+						$key++;
+					}
+					continue;
+				}
+			}
+
+			$argv[] = $arg;
+		}
+		$_SERVER['argv'] = $argv;
+	}
+
+	protected function showHelp() {
+		parent::showHelp();
+		$this->output( "PHPUnit options are also accepted:\n\n" );
+		$command = new MediaWikiPHPUnitCommand();
+		$command->publicShowHelp();
+	}
 }
 
-$maintClass = 'PHPUnitMaintClass';
+$maintClass = PHPUnitMaintClass::class;
 require RUN_MAINTENANCE_IF_MAIN;
-
-if ( !class_exists( 'PHPUnit_Runner_Version' ) ) {
-	require_once 'PHPUnit/Runner/Version.php';
-}
-
-if ( PHPUnit_Runner_Version::id() !== '@package_version@'
-	&& version_compare( PHPUnit_Runner_Version::id(), '3.7.0', '<' )
-) {
-	die( 'PHPUnit 3.7.0 or later required, you have ' . PHPUnit_Runner_Version::id() . ".\n" );
-}
-
-if ( !class_exists( 'PHPUnit_TextUI_Command' ) ) {
-	require_once 'PHPUnit/Autoload.php';
-}
-MediaWikiPHPUnitCommand::main();

@@ -26,9 +26,11 @@
 
 /**
  * A formatter that outputs unified diffs
+ * @newable
  * @ingroup DifferenceEngine
  */
 class UnifiedDiffFormatter extends DiffFormatter {
+
 	/** @var int */
 	protected $leadingContextLines = 2;
 
@@ -36,22 +38,32 @@ class UnifiedDiffFormatter extends DiffFormatter {
 	protected $trailingContextLines = 2;
 
 	/**
-	 * @param $lines
+	 * @param string[] $lines
+	 * @param string $prefix
+	 */
+	protected function lines( $lines, $prefix = ' ' ) {
+		foreach ( $lines as $line ) {
+			$this->writeOutput( "{$prefix}{$line}\n" );
+		}
+	}
+
+	/**
+	 * @param string[] $lines
 	 */
 	protected function added( $lines ) {
 		$this->lines( $lines, '+' );
 	}
 
 	/**
-	 * @param $lines
+	 * @param string[] $lines
 	 */
 	protected function deleted( $lines ) {
 		$this->lines( $lines, '-' );
 	}
 
 	/**
-	 * @param $orig
-	 * @param $closing
+	 * @param string[] $orig
+	 * @param string[] $closing
 	 */
 	protected function changed( $orig, $closing ) {
 		$this->deleted( $orig );
@@ -59,13 +71,15 @@ class UnifiedDiffFormatter extends DiffFormatter {
 	}
 
 	/**
-	 * @param $xbeg
-	 * @param $xlen
-	 * @param $ybeg
-	 * @param $ylen
+	 * @param int $xbeg
+	 * @param int $xlen
+	 * @param int $ybeg
+	 * @param int $ylen
+	 *
 	 * @return string
 	 */
 	protected function blockHeader( $xbeg, $xlen, $ybeg, $ylen ) {
 		return "@@ -$xbeg,$xlen +$ybeg,$ylen @@";
 	}
+
 }

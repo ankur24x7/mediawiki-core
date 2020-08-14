@@ -5,47 +5,47 @@
  * Copyright © 2011, Antoine Musso
  *
  * @author Antoine Musso
- * @group Database
  */
 
-if ( !defined( 'MEDIAWIKI' ) ) {
-	die( 1 );
-}
-
-global $IP;
-require_once "$IP/includes/QueryPage.php"; // Needed to populate $wgQueryPages
+use MediaWiki\MediaWikiServices;
 
 /**
+ * @group Database
  * @covers QueryPage<extended>
  */
-class QueryAllSpecialPagesTest extends MediaWikiTestCase {
-
-	/** List query pages that can not be tested automatically */
-	protected $manualTest = array(
-		'LinkSearchPage'
-	);
+class QueryAllSpecialPagesTest extends MediaWikiIntegrationTestCase {
 
 	/**
-	 * Pages whose query use the same DB table more than once.
-	 * This is used to skip testing those pages when run against a MySQL backend
-	 * which does not support reopening a temporary table. See upstream bug:
-	 * http://bugs.mysql.com/bug.php?id=10327
+	 * @var SpecialPage[]
 	 */
-	protected $reopensTempTable = array(
+	private $queryPages;
+
+	/** List query pages that can not be tested automatically */
+	protected $manualTest = [
+		SpecialLinkSearch::class
+	];
+
+	/**
+	 * Names of pages whose query use the same DB table more than once.
+	 * This is used to skip testing those pages when run against a MySQL backend
+	 * which does not support reopening a temporary table.
+	 * For more info, see https://phabricator.wikimedia.org/T256006
+	 */
+	protected $reopensTempTable = [
 		'BrokenRedirects',
-	);
+	];
 
 	/**
 	 * Initialize all query page objects
 	 */
-	function __construct() {
-		parent::__construct();
+	protected function setUp() : void {
+		parent::setUp();
 
-		global $wgQueryPages;
-		foreach ( $wgQueryPages as $page ) {
-			$class = $page[0];
+		foreach ( QueryPage::getPages() as $page ) {
+			list( $class, $name ) = $page;
 			if ( !in_array( $class, $this->manualTest ) ) {
-				$this->queryPages[$class] = new $class;
+				$this->queryPages[$class] =
+					MediaWikiServices::getInstance()->getSpecialPageFactory()->getPage( $name );
 			}
 		}
 	}
@@ -58,14 +58,14 @@ class QueryAllSpecialPagesTest extends MediaWikiTestCase {
 		global $wgDBtype;
 
 		foreach ( $this->queryPages as $page ) {
-
 			// With MySQL, skips special pages reopening a temporary table
-			// See http://bugs.mysql.com/bug.php?id=10327
+			// See https://bugs.mysql.com/bug.php?id=10327
 			if (
 				$wgDBtype === 'mysql'
 				&& in_array( $page->getName(), $this->reopensTempTable )
 			) {
-				$this->markTestSkipped( "SQL query for page {$page->getName()} can not be tested on MySQL backend (it reopens a temporary table)" );
+				$this->markTestSkipped( "SQL query for page {$page->getName()} "
+					. "can not be tested on MySQL backend (it reopens a temporary table)" );
 				continue;
 			}
 

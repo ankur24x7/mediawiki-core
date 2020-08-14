@@ -25,14 +25,30 @@
  * @author Daniel Kinzler
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Content object implementation for representing flat text.
  *
  * TextContent instances are immutable
  *
+ * @newable
+ * @stable to extend
  * @ingroup Content
  */
 class TextContent extends AbstractContent {
+
+	/**
+	 * @var string
+	 */
+	protected $mText;
+
+	/**
+	 * @stable to call
+	 * @param string $text
+	 * @param string $model_id
+	 * @throws MWException
+	 */
 	public function __construct( $text, $model_id = CONTENT_MODEL_TEXT ) {
 		parent::__construct( $model_id );
 
@@ -50,29 +66,40 @@ class TextContent extends AbstractContent {
 		$this->mText = $text;
 	}
 
+	/**
+	 * @note Mutable subclasses MUST override this to return a copy!
+	 *
+	 * @return Content $this
+	 */
 	public function copy() {
 		return $this; # NOTE: this is ok since TextContent are immutable.
 	}
 
+	/**
+	 * @stable to override
+	 *
+	 * @param int $maxlength
+	 *
+	 * @return string
+	 */
 	public function getTextForSummary( $maxlength = 250 ) {
-		global $wgContLang;
+		$text = $this->getText();
 
-		$text = $this->getNativeData();
-
-		$truncatedtext = $wgContLang->truncate(
-			preg_replace( "/[\n\r]/", ' ', $text ),
-			max( 0, $maxlength ) );
+		$truncatedtext = MediaWikiServices::getInstance()->getContentLanguage()->
+			truncateForDatabase( preg_replace( "/[\n\r]/", ' ', $text ), max( 0, $maxlength ) );
 
 		return $truncatedtext;
 	}
 
 	/**
-	 * returns the text's size in bytes.
+	 * Returns the text's size in bytes.
 	 *
-	 * @return int The size
+	 * @stable to override
+	 *
+	 * @return int
 	 */
 	public function getSize() {
-		$text = $this->getNativeData();
+		$text = $this->getText();
 
 		return strlen( $text );
 	}
@@ -81,10 +108,12 @@ class TextContent extends AbstractContent {
 	 * Returns true if this content is not a redirect, and $wgArticleCountMethod
 	 * is "any".
 	 *
-	 * @param bool $hasLinks if it is known whether this content contains links,
+	 * @stable to override
+	 *
+	 * @param bool|null $hasLinks If it is known whether this content contains links,
 	 * provide this information here, to avoid redundant parsing to find out.
 	 *
-	 * @return bool True if the content is countable
+	 * @return bool
 	 */
 	public function isCountable( $hasLinks = null ) {
 		global $wgArticleCountMethod;
@@ -103,83 +132,124 @@ class TextContent extends AbstractContent {
 	/**
 	 * Returns the text represented by this Content object, as a string.
 	 *
-	 * @return string: the raw text
+	 * @deprecated since 1.33 use getText() instead.
+	 *
+	 * @return string The raw text. Subclasses may guarantee a specific syntax here.
 	 */
 	public function getNativeData() {
-		$text = $this->mText;
-
-		return $text;
+		return $this->getText();
 	}
 
 	/**
 	 * Returns the text represented by this Content object, as a string.
 	 *
-	 * @return string: the raw text
+	 * @since 1.33
+	 * @note This method should not be overwritten by subclasses. If a subclass find itself in
+	 * need to override this method, it should probably not be based on TextContent, but
+	 * should rather extend AbstractContent instead.
+	 *
+	 * @return string The raw text.
+	 */
+	public function getText() {
+		return $this->mText;
+	}
+
+	/**
+	 * Returns the text represented by this Content object, as a string.
+	 *
+	 * @stable to override
+	 *
+	 * @return string The raw text.
 	 */
 	public function getTextForSearchIndex() {
-		return $this->getNativeData();
+		return $this->getText();
 	}
 
 	/**
 	 * Returns attempts to convert this content object to wikitext,
 	 * and then returns the text string. The conversion may be lossy.
 	 *
-	 * @note: this allows any text-based content to be transcluded as if it was wikitext.
+	 * @stable to override
 	 *
-	 * @return string|false: the raw text, or null if the conversion failed
+	 * @note this allows any text-based content to be transcluded as if it was wikitext.
+	 *
+	 * @return string|bool The raw text, or false if the conversion failed.
 	 */
 	public function getWikitextForTransclusion() {
+		/** @var WikitextContent $wikitext */
 		$wikitext = $this->convert( CONTENT_MODEL_WIKITEXT, 'lossy' );
+		'@phan-var WikitextContent $wikitext';
 
 		if ( $wikitext ) {
-			return $wikitext->getNativeData();
+			return $wikitext->getText();
 		} else {
 			return false;
 		}
 	}
 
 	/**
-	 * Returns a Content object with pre-save transformations applied.
-	 * This implementation just trims trailing whitespace.
+	 * Do a "\r\n" -> "\n" and "\r" -> "\n" transformation
+	 * as well as trim trailing whitespace
 	 *
-	 * @param $title Title
-	 * @param $user User
-	 * @param $popts ParserOptions
+	 * This was formerly part of Parser::preSaveTransform, but
+	 * for non-wikitext content models they probably still want
+	 * to normalize line endings without all of the other PST
+	 * changes.
+	 *
+	 * @since 1.28
+	 * @param string $text
+	 * @return string
+	 */
+	public static function normalizeLineEndings( $text ) {
+		return str_replace( [ "\r\n", "\r" ], "\n", rtrim( $text ) );
+	}
+
+	/**
+	 * Returns a Content object with pre-save transformations applied.
+	 *
+	 * At a minimum, subclasses should make sure to call TextContent::normalizeLineEndings()
+	 * either directly or part of Parser::preSaveTransform().
+	 *
+	 * @stable to override
+	 *
+	 * @param Title $title
+	 * @param User $user
+	 * @param ParserOptions $popts
+	 *
 	 * @return Content
 	 */
 	public function preSaveTransform( Title $title, User $user, ParserOptions $popts ) {
-		$text = $this->getNativeData();
-		$pst = rtrim( $text );
+		$text = $this->getText();
+		$pst = self::normalizeLineEndings( $text );
 
-		return ( $text === $pst ) ? $this : new static( $pst );
+		return ( $text === $pst ) ? $this : new static( $pst, $this->getModel() );
 	}
 
 	/**
 	 * Diff this content object with another content object.
 	 *
+	 * @stable to override
 	 * @since 1.21
 	 *
-	 * @param $that Content: The other content object to compare this content
-	 * object to.
-	 * @param $lang Language: The language object to use for text segmentation.
-	 *    If not given, $wgContentLang is used.
+	 * @param Content $that The other content object to compare this content object to.
+	 * @param Language|null $lang The language object to use for text segmentation.
+	 *    If not given, the content language is used.
 	 *
 	 * @return Diff A diff representing the changes that would have to be
 	 *    made to this content object to make it equal to $that.
 	 */
 	public function diff( Content $that, Language $lang = null ) {
-		global $wgContLang;
-
 		$this->checkModelID( $that->getModel() );
-
+		/** @var self $that */
+		'@phan-var self $that';
 		// @todo could implement this in DifferenceEngine and just delegate here?
 
 		if ( !$lang ) {
-			$lang = $wgContLang;
+			$lang = MediaWikiServices::getInstance()->getContentLanguage();
 		}
 
-		$otext = $this->getNativeData();
-		$ntext = $that->getNativeData();
+		$otext = $this->getText();
+		$ntext = $that->getText();
 
 		# Note: Use native PHP diff, external engines don't give us abstract output
 		$ota = explode( "\n", $lang->segmentForDiff( $otext ) );
@@ -191,32 +261,33 @@ class TextContent extends AbstractContent {
 	}
 
 	/**
-	 * Returns a generic ParserOutput object, wrapping the HTML returned by
-	 * getHtml().
+	 * Fills the provided ParserOutput object with information derived from the content.
+	 * Unless $generateHtml was false, this includes an HTML representation of the content
+	 * provided by getHtml().
 	 *
-	 * @param $title Title Context title for parsing
-	 * @param int|null $revId Revision ID (for {{REVISIONID}})
-	 * @param $options ParserOptions|null Parser options
+	 * For content models listed in $wgTextModelsToParse, this method will call the MediaWiki
+	 * wikitext parser on the text to extract any (wikitext) links, magic words, etc.
+	 *
+	 * Subclasses may override this to provide custom content processing.
+	 * For custom HTML generation alone, it is sufficient to override getHtml().
+	 *
+	 * @stable to override
+	 *
+	 * @param Title $title Context title for parsing
+	 * @param int $revId Revision ID (for {{REVISIONID}})
+	 * @param ParserOptions $options
 	 * @param bool $generateHtml Whether or not to generate HTML
-	 *
-	 * @return ParserOutput representing the HTML form of the text
+	 * @param ParserOutput &$output The output object to fill (reference).
 	 */
-	public function getParserOutput( Title $title,
-		$revId = null,
-		ParserOptions $options = null, $generateHtml = true
+	protected function fillParserOutput( Title $title, $revId,
+		ParserOptions $options, $generateHtml, ParserOutput &$output
 	) {
-		global $wgParser, $wgTextModelsToParse;
-
-		if ( !$options ) {
-			//NOTE: use canonical options per default to produce cacheable output
-			$options = $this->getContentHandler()->makeParserOptions( 'canonical' );
-		}
+		global $wgTextModelsToParse;
 
 		if ( in_array( $this->getModel(), $wgTextModelsToParse ) ) {
-			// parse just to get links etc into the database
-			$po = $wgParser->parse( $this->getNativeData(), $title, $options, true, true, $revId );
-		} else {
-			$po = new ParserOutput();
+			// parse just to get links etc into the database, HTML is replaced below.
+			$output = MediaWikiServices::getInstance()->getParser()
+				->parse( $this->getText(), $title, $options, true, true, $revId );
 		}
 
 		if ( $generateHtml ) {
@@ -225,49 +296,46 @@ class TextContent extends AbstractContent {
 			$html = '';
 		}
 
-		$po->setText( $html );
-
-		return $po;
+		$output->clearWrapperDivClass();
+		$output->setText( $html );
 	}
 
 	/**
 	 * Generates an HTML version of the content, for display. Used by
-	 * getParserOutput() to construct a ParserOutput object.
+	 * fillParserOutput() to provide HTML for the ParserOutput object.
 	 *
-	 * This default implementation just calls getHighlightHtml(). Content
-	 * models that have another mapping to HTML (as is the case for markup
-	 * languages like wikitext) should override this method to generate the
-	 * appropriate HTML.
+	 * Subclasses may override this to provide a custom HTML rendering.
+	 * If further information is to be derived from the content (such as
+	 * categories), the fillParserOutput() method can be overridden instead.
+	 *
+	 * @stable to override
 	 *
 	 * @return string An HTML representation of the content
 	 */
 	protected function getHtml() {
-		return $this->getHighlightHtml();
+		// TODO: Remove in MediaWiki 1.36
+		if ( method_exists( $this, 'getHighlightHtml' ) ) {
+			wfDeprecated( 'getHighlightHtml', '1.24' );
+			throw new Exception( 'getHighlightHtml() is not called any more!' );
+		}
+		return htmlspecialchars( $this->getText() );
 	}
 
 	/**
-	 * Generates a syntax-highlighted version of the content, as HTML.
-	 * Used by the default implementation of getHtml().
-	 *
-	 * @return string an HTML representation of the content's markup
-	 */
-	protected function getHighlightHtml() {
-		# TODO: make Highlighter interface, use highlighter here, if available
-		return htmlspecialchars( $this->getNativeData() );
-	}
-
-	/**
-	 * @see Content::convert()
-	 *
 	 * This implementation provides lossless conversion between content models based
 	 * on TextContent.
 	 *
-	 * @param string $toModel the desired content model, use the CONTENT_MODEL_XXX flags.
-	 * @param string $lossy flag, set to "lossy" to allow lossy conversion. If lossy conversion is
-	 * not allowed, full round-trip conversion is expected to work without losing information.
+	 * @stable to override
 	 *
-	 * @return Content|bool A content object with the content model $toModel, or false if
-	 * that conversion is not supported.
+	 * @param string $toModel The desired content model, use the CONTENT_MODEL_XXX flags.
+	 * @param string $lossy Flag, set to "lossy" to allow lossy conversion. If lossy conversion is not
+	 *     allowed, full round-trip conversion is expected to work without losing information.
+	 *
+	 * @return Content|bool A content object with the content model $toModel, or false if that
+	 *     conversion is not supported.
+	 * @throws MWUnknownContentModelException
+	 *
+	 * @see Content::convert()
 	 */
 	public function convert( $toModel, $lossy = '' ) {
 		$converted = parent::convert( $toModel, $lossy );
@@ -276,14 +344,15 @@ class TextContent extends AbstractContent {
 			return $converted;
 		}
 
-		$toHandler = ContentHandler::getForModelID( $toModel );
+		$toHandler = $this->getContentHandlerFactory()->getContentHandler( $toModel );
 
 		if ( $toHandler instanceof TextContentHandler ) {
-			//NOTE: ignore content serialization format - it's just text anyway.
-			$text = $this->getNativeData();
+			// NOTE: ignore content serialization format - it's just text anyway.
+			$text = $this->getText();
 			$converted = $toHandler->unserializeContent( $text );
 		}
 
 		return $converted;
 	}
+
 }

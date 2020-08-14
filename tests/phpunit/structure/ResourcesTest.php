@@ -1,29 +1,19 @@
 <?php
+
+use MediaWiki\MediaWikiServices;
+use Wikimedia\TestingAccessWrapper;
+
 /**
  * Sanity checks for making sure registered resources are sane.
  *
- * @file
  * @author Antoine Musso
  * @author Niklas Laxström
  * @author Santhosh Thottingal
- * @author Timo Tijhof
  * @copyright © 2012, Antoine Musso
  * @copyright © 2012, Niklas Laxström
  * @copyright © 2012, Santhosh Thottingal
- * @copyright © 2012, Timo Tijhof
- *
- * @license http://www.gnu.org/copyleft/gpl.html GNU General Public License 2.0 or later
  */
-class ResourcesTest extends MediaWikiTestCase {
-
-	/**
-	 * @dataProvider provideResourceFiles
-	 */
-	public function testFileExistence( $filename, $module, $resource ) {
-		$this->assertFileExists( $filename,
-			"File '$resource' referenced by '$module' must exist."
-		);
-	}
+class ResourcesTest extends MediaWikiIntegrationTestCase {
 
 	/**
 	 * @dataProvider provideMediaStylesheets
@@ -31,11 +21,120 @@ class ResourcesTest extends MediaWikiTestCase {
 	public function testStyleMedia( $moduleName, $media, $filename, $css ) {
 		$cssText = CSSMin::minify( $css->cssText );
 
-		$this->assertTrue( strpos( $cssText, '@media' ) === false, 'Stylesheets should not both specify "media" and contain @media' );
+		$this->assertTrue(
+			strpos( $cssText, '@media' ) === false,
+			'Stylesheets should not both specify "media" and contain @media'
+		);
+	}
+
+	/**
+	 * Verify that all modules specified as dependencies of other modules actually
+	 * exist and are not illegal.
+	 *
+	 * @todo Modules can dynamically choose dependencies based on context. This method
+	 * does not find all such variations. The same applies to testUnsatisfiableDependencies().
+	 */
+	public function testValidDependencies() {
+		$data = self::getAllModules();
+		$knownDeps = array_keys( $data['modules'] );
+		$illegalDeps = [ 'startup' ];
+
+		// Avoid an assert for each module to keep the test fast.
+		// Instead, perform a single assertion against everything at once.
+		// When all is good, actual/expected are both empty arrays.
+		// When we find issues, add the violations to 'actual' and add an empty
+		// key to 'expected'. These keys in expected are because the PHPUnit diff
+		// (as of 6.5) only goes one level deep.
+		$actualUnknown = [];
+		$expectedUnknown = [];
+		$actualIllegal = [];
+		$expectedIllegal = [];
+
+		/** @var ResourceLoaderModule $module */
+		foreach ( $data['modules'] as $moduleName => $module ) {
+			foreach ( $module->getDependencies( $data['context'] ) as $dep ) {
+				if ( !in_array( $dep, $knownDeps, true ) ) {
+					$actualUnknown[$moduleName][] = $dep;
+					$expectedUnknown[$moduleName] = [];
+				}
+				if ( in_array( $dep, $illegalDeps, true ) ) {
+					$actualIllegal[$moduleName][] = $dep;
+					$expectedIllegal[$moduleName] = [];
+				}
+			}
+		}
+		$this->assertEquals( $expectedUnknown, $actualUnknown, 'Dependencies that do not exist' );
+		$this->assertEquals( $expectedIllegal, $actualIllegal, 'Dependencies that are not legal' );
+	}
+
+	/**
+	 * Verify that all specified messages actually exist.
+	 */
+	public function testMissingMessages() {
+		$data = self::getAllModules();
+		$lang = MediaWikiServices::getInstance()->getLanguageFactory()->getLanguage( 'en' );
+
+		/** @var ResourceLoaderModule $module */
+		foreach ( $data['modules'] as $moduleName => $module ) {
+			foreach ( $module->getMessages() as $msgKey ) {
+				$this->assertTrue(
+					wfMessage( $msgKey )->useDatabase( false )->inLanguage( $lang )->exists(),
+					"Message '$msgKey' required by '$moduleName' must exist"
+				);
+			}
+		}
+	}
+
+	/**
+	 * Verify that all dependencies of all modules are always satisfiable with the 'targets' defined
+	 * for the involved modules.
+	 *
+	 * Example: A depends on B. A has targets: mobile, desktop. B has targets: desktop. Therefore the
+	 * dependency is sometimes unsatisfiable: it's impossible to load module A on mobile.
+	 */
+	public function testUnsatisfiableDependencies() {
+		$data = self::getAllModules();
+
+		/** @var ResourceLoaderModule $module */
+		foreach ( $data['modules'] as $moduleName => $module ) {
+			$moduleTargets = $module->getTargets();
+			foreach ( $module->getDependencies( $data['context'] ) as $dep ) {
+				if ( !isset( $data['modules'][$dep] ) ) {
+					// Missing dependencies reported by testMissingDependencies
+					continue;
+				}
+				$targets = $data['modules'][$dep]->getTargets();
+				foreach ( $moduleTargets as $moduleTarget ) {
+					$this->assertContains(
+						$moduleTarget,
+						$targets,
+						"The module '$moduleName' must not have target '$moduleTarget' "
+							. "because its dependency '$dep' does not have it"
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * CSSMin::getLocalFileReferences should ignore url(...) expressions
+	 * that have been commented out.
+	 */
+	public function testCommentedLocalFileReferences() {
+		$basepath = __DIR__ . '/../data/css/';
+		$css = file_get_contents( $basepath . 'comments.css' );
+		$files = CSSMin::getLocalFileReferences( $css, $basepath );
+		$expected = [ $basepath . 'not-commented.gif' ];
+		$this->assertSame(
+			$expected,
+			$files,
+			'Url(...) expression in comment should be omitted.'
+		);
 	}
 
 	/**
 	 * Get all registered modules from ResouceLoader.
+	 * @return array
 	 */
 	protected static function getAllModules() {
 		global $wgEnableJavaScriptTest;
@@ -45,10 +144,10 @@ class ResourcesTest extends MediaWikiTestCase {
 		$org_wgEnableJavaScriptTest = $wgEnableJavaScriptTest;
 		$wgEnableJavaScriptTest = true;
 
-		// Initialize ResourceLoader
-		$rl = new ResourceLoader();
+		// Get main ResourceLoader
+		$rl = MediaWikiServices::getInstance()->getResourceLoader();
 
-		$modules = array();
+		$modules = [];
 
 		foreach ( $rl->getModuleNames() as $moduleName ) {
 			$modules[$moduleName] = $rl->getModule( $moduleName );
@@ -57,11 +156,11 @@ class ResourcesTest extends MediaWikiTestCase {
 		// Restore settings
 		$wgEnableJavaScriptTest = $org_wgEnableJavaScriptTest;
 
-		return array(
+		return [
 			'modules' => $modules,
 			'resourceloader' => $rl,
 			'context' => new ResourceLoaderContext( $rl, new FauxRequest() )
-		);
+		];
 	}
 
 	/**
@@ -70,7 +169,6 @@ class ResourcesTest extends MediaWikiTestCase {
 	 */
 	public static function provideMediaStylesheets() {
 		$data = self::getAllModules();
-		$cases = array();
 
 		foreach ( $data['modules'] as $moduleName => $module ) {
 			if ( !$module instanceof ResourceLoaderFileModule ) {
@@ -87,68 +185,62 @@ class ResourcesTest extends MediaWikiTestCase {
 
 			$styleFiles = $getStyleFiles->invoke( $module, $data['context'] );
 
-			$flip = $module->getFlip( $data['context'] );
-
 			foreach ( $styleFiles as $media => $files ) {
 				if ( $media && $media !== 'all' ) {
 					foreach ( $files as $file ) {
-						$cases[] = array(
+						yield [
 							$moduleName,
 							$media,
 							$file,
 							// XXX: Wrapped in an object to keep it out of PHPUnit output
-							(object) array( 'cssText' => $readStyleFile->invoke( $module, $file, $flip ) ),
-						);
+							(object)[
+								'cssText' => $readStyleFile->invoke(
+									$module,
+									$file,
+									$data['context']
+								)
+							],
+						];
 					}
 				}
 			}
 		}
-
-		return $cases;
 	}
 
 	/**
-	 * Get all resource files from modules that are an instance of
-	 * ResourceLoaderFileModule (or one of its subclasses).
-	 *
-	 * Since the raw data is stored in protected properties, we have to
-	 * overrride this through ReflectionObject methods.
+	 * Check all resource files from ResourceLoaderFileModule modules.
 	 */
-	public static function provideResourceFiles() {
+	public function testResourceFiles() {
 		$data = self::getAllModules();
-		$cases = array();
 
 		// See also ResourceLoaderFileModule::__construct
-		$filePathProps = array(
+		$filePathProps = [
 			// Lists of file paths
-			'lists' => array(
+			'lists' => [
 				'scripts',
 				'debugScripts',
-				'loaderScripts',
 				'styles',
-			),
+			],
 
 			// Collated lists of file paths
-			'nested-lists' => array(
+			'nested-lists' => [
 				'languageScripts',
 				'skinScripts',
 				'skinStyles',
-			),
-		);
+			],
+		];
 
 		foreach ( $data['modules'] as $moduleName => $module ) {
 			if ( !$module instanceof ResourceLoaderFileModule ) {
 				continue;
 			}
 
-			$reflectedModule = new ReflectionObject( $module );
+			$moduleProxy = TestingAccessWrapper::newFromObject( $module );
 
-			$files = array();
+			$files = [];
 
 			foreach ( $filePathProps['lists'] as $propName ) {
-				$property = $reflectedModule->getProperty( $propName );
-				$property->setAccessible( true );
-				$list = $property->getValue( $module );
+				$list = $moduleProxy->$propName;
 				foreach ( $list as $key => $value ) {
 					// 'scripts' are numeral arrays.
 					// 'styles' can be numeral or associative.
@@ -163,9 +255,7 @@ class ResourcesTest extends MediaWikiTestCase {
 			}
 
 			foreach ( $filePathProps['nested-lists'] as $propName ) {
-				$property = $reflectedModule->getProperty( $propName );
-				$property->setAccessible( true );
-				$lists = $property->getValue( $module );
+				$lists = $moduleProxy->$propName;
 				foreach ( $lists as $list ) {
 					foreach ( $list as $key => $value ) {
 						// We need the same filter as for 'lists',
@@ -179,20 +269,50 @@ class ResourcesTest extends MediaWikiTestCase {
 				}
 			}
 
-			// Get method for resolving the paths to full paths
-			$method = $reflectedModule->getMethod( 'getLocalPath' );
-			$method->setAccessible( true );
-
-			// Populate cases
 			foreach ( $files as $file ) {
-				$cases[] = array(
-					$method->invoke( $module, $file ),
-					$moduleName,
+				$relativePath = ( $file instanceof ResourceLoaderFilePath ? $file->getPath() : $file );
+				$this->assertFileExists(
+					$moduleProxy->getLocalPath( $file ),
+					"File '$relativePath' referenced by '$moduleName' must exist."
+				);
+			}
+
+			// To populate missingLocalFileRefs. Not sure how sane this is inside this test...
+			$moduleProxy->readStyleFiles(
+				$module->getStyleFiles( $data['context'] ),
+				$data['context']
+			);
+
+			$missingLocalFileRefs = $moduleProxy->missingLocalFileRefs;
+
+			foreach ( $missingLocalFileRefs as $file ) {
+				$this->assertFileExists(
 					$file,
+					"File '$file' referenced by '$moduleName' must exist."
 				);
 			}
 		}
+	}
 
-		return $cases;
+	/**
+	 * Check all image files from ResourceLoaderImageModule modules.
+	 */
+	public function testImageFiles() {
+		$data = self::getAllModules();
+
+		foreach ( $data['modules'] as $moduleName => $module ) {
+			if ( !$module instanceof ResourceLoaderImageModule ) {
+				continue;
+			}
+
+			$imagesFiles = $module->getImages( $data['context'] );
+			foreach ( $imagesFiles as $file ) {
+				$relativePath = $file->getName();
+				$this->assertFileExists(
+					$file->getPath( $data['context'] ),
+					"File '$relativePath' referenced by '$moduleName' must exist."
+				);
+			}
+		}
 	}
 }
